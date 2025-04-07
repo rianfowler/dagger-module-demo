@@ -603,7 +603,7 @@ func (m *DaggerModuleDemo) DeployK3sAndApp(ctx context.Context) (string, error) 
 
 // StartK3SAndOutputKubectlCommands starts a k3s cluster, retrieves the kubeconfig,
 // and outputs a set of kubectl one-liners that you can use to interact with the cluster.
-func (m *DaggerModuleDemo) StartK3SAndOutputKubectlCommands(ctx context.Context) (string, error) {
+func (m *DaggerModuleDemo) StartK3SAndOutputKubectlCommands(ctx context.Context) (*dagger.Container, error) {
 	// Create a new k3s cluster instance named "test".
 	k3sCluster := dag.K3S("test")
 	// Get the k3s server container.
@@ -613,7 +613,7 @@ func (m *DaggerModuleDemo) StartK3SAndOutputKubectlCommands(ctx context.Context)
 	// kServer, err := kServer.Start(ctx)
 	_, err := kServer.Start(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to start k3s cluster: %w", err)
+		return nil, fmt.Errorf("failed to start k3s cluster: %w", err)
 	}
 	fmt.Println("k3s cluster started.")
 
@@ -622,7 +622,7 @@ func (m *DaggerModuleDemo) StartK3SAndOutputKubectlCommands(ctx context.Context)
 	// Convert the dagger.File to a string.
 	kubeconfigContent, err := kubeconfigFile.Contents(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to retrieve kubeconfig: %w", err)
+		return nil, fmt.Errorf("failed to retrieve kubeconfig: %w", err)
 	}
 
 	// Prepare a set of kubectl one-liner commands.
@@ -644,6 +644,9 @@ kubectl apply -f <your-manifest.yaml>
 kubectl logs <pod-name> -c <container-name>
 `, kubeconfigContent)
 
+	fmt.Print(kubectlCommands)
+
 	// Return the one-liner commands so you can copy-paste them into your terminal.
-	return kubectlCommands, nil
+	// return kubectlCommands, nil
+	return k3sCluster.Container(), nil
 }
