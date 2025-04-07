@@ -554,3 +554,96 @@ func (m *DaggerModuleDemo) StartK0sCluster(ctx context.Context) (string, error) 
 	// After the sleep period, return a summary message.
 	return "k0s cluster was running for 5 minutes", nil
 }
+
+// DeployK3sAndApp deploys a k3s cluster, installs an app via Helm,
+// tests the app via curl, and returns the output.
+func (m *DaggerModuleDemo) DeployK3sAndApp(ctx context.Context) (string, error) {
+	// Create a new k3s cluster instance named "test".
+	k3sCluster := dag.K3S("test")
+	// Get the k3s server container.
+	kServer := k3sCluster.Server()
+
+	// Start the k3s cluster.
+	kServer, err := kServer.Start(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to start k3s cluster: %w", err)
+	}
+	fmt.Println("k3s cluster started as a service.")
+
+	// Retrieve the endpoint for the cluster's service on port 80 over HTTP.
+	ep, err := kServer.Endpoint(ctx, dagger.ServiceEndpointOpts{
+		Port:   80,
+		Scheme: "http",
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to retrieve cluster endpoint: %w", err)
+	}
+
+	// Use an alpine/helm container to:
+	// 1. Install kubectl (via apk add).
+	// 2. Set KUBECONFIG from the k3s cluster's kubeconfig.
+	// 3. Install the nginx chart via Helm.
+	// 4. Run curl to test the deployment using the endpoint.
+	out, err := dag.Container().From("alpine/helm").
+		WithExec([]string{"apk", "add", "kubectl"}).
+		WithEnvVariable("KUBECONFIG", "/.kube/config").
+		// Mount the kubeconfig file from the k3s cluster.
+		WithFile("/.kube/config", k3sCluster.Config()).
+		// Install the nginx chart.
+		WithExec([]string{"helm", "install", "--wait", "--debug", "nginx", "oci://registry-1.docker.io/bitnamicharts/nginx"}).
+		// Test the deployment using curl.
+		WithExec([]string{"curl", "-sS", ep}).
+		Stdout(ctx)
+	if err != nil {
+		return "", fmt.Errorf("error during deployment and test: %w", err)
+	}
+
+	return out, nil
+}
+
+// StartK3SAndOutputKubectlCommands starts a k3s cluster, retrieves the kubeconfig,
+// and outputs a set of kubectl one-liners that you can use to interact with the cluster.
+func (m *DaggerModuleDemo) StartK3SAndOutputKubectlCommands(ctx context.Context) (string, error) {
+	// Create a new k3s cluster instance named "test".
+	k3sCluster := dag.K3S("test")
+	// Get the k3s server container.
+	kServer := k3sCluster.Server()
+
+	// Start the k3s cluster.
+	// kServer, err := kServer.Start(ctx)
+	_, err := kServer.Start(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to start k3s cluster: %w", err)
+	}
+	fmt.Println("k3s cluster started.")
+
+	// Retrieve the kubeconfig as a dagger.File from the cluster.
+	kubeconfigFile := k3sCluster.Config()
+	// Convert the dagger.File to a string.
+	kubeconfigContent, err := kubeconfigFile.Contents(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to retrieve kubeconfig: %w", err)
+	}
+
+	// Prepare a set of kubectl one-liner commands.
+	// These commands allow you to export the kubeconfig, check nodes and pods,
+	// and optionally install applications or inspect pod logs.
+	kubectlCommands := fmt.Sprintf(`# Export the kubeconfig for local kubectl usage:
+echo '%s' > /tmp/k3s.yaml && export KUBECONFIG=/tmp/k3s.yaml
+
+# Verify cluster nodes:
+kubectl get nodes
+
+# List all pods across all namespaces:
+kubectl get pods --all-namespaces
+
+# (Optional) Install an application using your manifest (replace <your-manifest.yaml> with your file):
+kubectl apply -f <your-manifest.yaml>
+
+# (Optional) Check logs for a pod (replace <pod-name> and <container-name> as needed):
+kubectl logs <pod-name> -c <container-name>
+`, kubeconfigContent)
+
+	// Return the one-liner commands so you can copy-paste them into your terminal.
+	return kubectlCommands, nil
+}
