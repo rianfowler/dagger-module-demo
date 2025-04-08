@@ -561,13 +561,24 @@ func (m *DaggerModuleDemo) StartK0sCluster(ctx context.Context) (string, error) 
 // tests the app via curl, and returns the output.
 func (m *DaggerModuleDemo) DeployK3sAndApp(ctx context.Context) (*dagger.Container, error) {
 	// Create a new k3s cluster instance named "test".
+	cacheBuster := fmt.Sprintf("%d", time.Now().UnixNano())
+	container := dag.Container().
+		From("alpine:latest").
+		WithEnvVariable("CACHE_BUSTER", cacheBuster).
+		WithExec([]string{"sh", "-c", "echo Cache buster is $CACHE_BUSTER && sleep 1"})
+
+	_, err := container.Stdout(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	k3sCluster := dag.K3S("test " + fmt.Sprint(rand.Int()))
 	// Get the k3s server container.
 	// kServer := k3sCluster.Container().AsService()
 	kServer := k3sCluster.Server()
 
 	// Start the k3s cluster.
-	kServer, err := kServer.Start(ctx)
+	kServer, err = kServer.Start(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start k3s cluster: %w", err)
 	}
