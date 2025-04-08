@@ -650,3 +650,43 @@ kubectl logs <pod-name> -c <container-name>
 	// return kubectlCommands, nil
 	return k3sCluster.Container(), nil
 }
+
+// StartDevContainer starts a dev container that mounts the current host directory
+// at /workspace inside the container, then leaves it running.
+// It returns instructions on how to attach VS Code to the running container.
+func (m *DaggerModuleDemo) StartDevContainer(ctx context.Context) (string, error) {
+	// Obtain the host directory for the current working directory.
+	// hostDir := dag.Host().Directory(".")
+	dag.
+		// Create a container from a VS Code dev container base image.
+		// In this example, we're using the official VS Code dev container base for Ubuntu.
+		devContainer := dag.Container().
+		From("mcr.microsoft.com/vscode/devcontainers/base:ubuntu").
+		// Mount the current host directory at /workspace in the container.
+		WithMountedDirectory("/workspace", hostDir).
+		// Set the working directory inside the container.
+		WithWorkdir("/workspace").
+		// Run a command that never terminates to keep the container alive.
+		WithExec([]string{"tail", "-f", "/dev/null"})
+
+	// Start the container in a separate goroutine so that it remains running.
+	// We don't need to capture the output here; the long-running exec keeps it alive.
+	go func() {
+		if _, err := devContainer.Stdout(ctx); err != nil {
+			fmt.Printf("Error keeping dev container alive: %v\n", err)
+		}
+	}()
+
+	// Provide instructions to the user for attaching VS Code to this container.
+	instructions := `Dev container is now running with your current directory mounted at /workspace.
+
+To attach to the dev container using VS Code:
+1. Open VS Code.
+2. Make sure you have the "Remote - Containers" extension installed.
+3. Open the Command Palette (F1 or Ctrl+Shift+P) and run "Remote-Containers: Attach to Running Container..."
+4. Select the dev container from the list that appears.
+
+Happy coding!`
+
+	return instructions, nil
+}
