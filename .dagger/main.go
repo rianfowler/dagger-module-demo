@@ -29,7 +29,10 @@ import (
 	"time"
 )
 
-type DaggerModuleDemo struct{}
+// DaggerModuleDemo is our module type with a CacheVolume field.
+type DaggerModuleDemo struct {
+	CacheVolume *dagger.CacheVolume
+}
 
 // Returns a container that echoes whatever string argument is provided
 func (m *DaggerModuleDemo) ContainerEcho(stringArg string) *dagger.Container {
@@ -659,4 +662,66 @@ kubectl logs <pod-name> -c <container-name>
 	// Return the one-liner commands so you can copy-paste them into your terminal.
 	// return kubectlCommands, nil
 	return k3sCluster.Container(), nil
+}
+
+// Init creates a cache volume, writes some initial files into it,
+// attaches the volume to the module, and returns the module.
+func (m *DaggerModuleDemo) Init(ctx context.Context) (*DaggerModuleDemo, error) {
+	// Create a cache volume with a unique key.
+	m.CacheVolume = dag.CacheVolume("chain-test-cache")
+
+	// Run a container that mounts the cache volume at /data and writes two initial files.
+	initContainer := dag.Container().
+		From("alpine:latest").
+		WithMountedCache("/data", m.CacheVolume).
+		WithExec([]string{"sh", "-c", "mkdir -p /data && echo 'initial content for file1' > /data/file1.txt && echo 'initial content for file2' > /data/file2.txt"})
+
+	// Run the container; we don’t need the output, just execute the commands.
+	if _, err := initContainer.Stdout(ctx); err != nil {
+		return nil, fmt.Errorf("Init: failed to write initial files: %w", err)
+	}
+
+	fmt.Println("Init: initial files written to cache volume.")
+	return m, nil
+}
+
+// Continue runs a container that mounts the same cache volume at /data and writes
+// an additional unique file into it. This allows multiple "continue" steps without conflicts.
+func (m *DaggerModuleDemo) Continue(ctx context.Context) (*DaggerModuleDemo, error) {
+	// Generate a unique identifier using the current timestamp.
+	uniqueID := time.Now().UnixNano()
+	fileName := fmt.Sprintf("/data/continue_%d.txt", uniqueID)
+	fileContent := fmt.Sprintf("continued content at %d", uniqueID)
+
+	// Run a container that mounts the cache volume and writes the unique file.
+	continueContainer := dag.Container().
+		From("alpine:latest").
+		WithMountedCache("/data", m.CacheVolume).
+		WithExec([]string{"sh", "-c", fmt.Sprintf("echo '%s' > %s", fileContent, fileName)})
+
+	if _, err := continueContainer.Stdout(ctx); err != nil {
+		return nil, fmt.Errorf("Continue: failed to write continued file: %w", err)
+	}
+
+	fmt.Printf("Continue: wrote unique file %s\n", fileName)
+	return m, nil
+}
+
+func (m *DaggerModuleDemo) Output(ctx context.Context) (string, error) {
+	// Run a container that mounts the cache volume at /data,
+	// copies its contents to /output, and lists the /output directory.
+	outputContainer := dag.Container().
+		From("alpine:latest").
+		WithMountedCache("/data", m.CacheVolume).
+		WithExec([]string{"sh", "-c", "ls -a /data"})
+
+	// Get the output from the container listing the files.
+	output, err := outputContainer.Stdout(ctx)
+	if err != nil {
+		return "", fmt.Errorf("Output: failed to sync files to output: %w", err)
+	}
+
+	fmt.Println("Output: files synced to /output:")
+	fmt.Println(output)
+	return output, nil
 }
