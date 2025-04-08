@@ -17,10 +17,12 @@ package main
 import (
 	"bufio"
 	"context"
+
 	"dagger/dagger-module-demo/internal/dagger"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"strings"
 	"sync"
@@ -422,7 +424,7 @@ func (m *DaggerModuleDemo) InteractiveTerminal(ctx context.Context) (string, err
 // DeployAndPollK8s demonstrates asynchronous orchestration in a Dagger function.
 // It starts a k0s Kubernetes cluster as a service, polls for its readiness asynchronously,
 // deploys a simple pod, and then polls the cluster for that pod.
-func (m *DaggerModuleDemo) DeployAndPollK8s(ctx context.Context) (string, error) {
+func (m *DaggerModuleDemo) DeployAndPollK8s(ctx context.Context) (*dagger.Container, error) {
 	// 1. Start the k0s container as a service.
 	//    We assume that "k0sproject/k0s:latest" is a valid image that runs a k0s server.
 	k0sContainer := dag.Container().
@@ -453,7 +455,7 @@ func (m *DaggerModuleDemo) DeployAndPollK8s(ctx context.Context) (string, error)
 	//    Assume k0s writes its admin kubeconfig to /var/lib/k0s/pki/admin.conf.
 	kubeconfigContents, err := k0sContainer.Directory("/var/lib/k0s/pki").File("admin.conf").Contents(ctx)
 	if err != nil {
-		return "", fmt.Errorf("error retrieving kubeconfig: %v", err)
+		return nil, fmt.Errorf("error retrieving kubeconfig: %v", err)
 	}
 	fmt.Println("Retrieved kubeconfig from k0s.")
 
@@ -475,7 +477,7 @@ spec:
 
 	k0sService := k0sContainer.AsService()
 	// 5. Deploy the manifest using a kubectl container.
-	deployer := dag.Container().
+	dag.Container().
 		From("bitnami/kubectl:latest").
 		WithMountedDirectory("/", manifestDir).
 		WithMountedDirectory("/kubeconfig", kubeconfigDir).
@@ -484,28 +486,28 @@ spec:
 		WithServiceBinding("k8s", k0sService).
 		WithExec([]string{"kubectl", "apply", "-f", "deployment.yaml"})
 
-	deployerOutput, err := deployer.Stdout(ctx)
-	if err != nil {
-		return "", fmt.Errorf("error deploying manifest: %v", err)
-	}
-	fmt.Println("Deployment manifest applied.")
+	// deployerOutput, err := deployer.Stdout(ctx)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("error deploying manifest: %v", err)
+	// }
+	// fmt.Println("Deployment manifest applied.")
 
 	// 6. Start a poller container to check for the deployed pod.
-	poller := dag.Container().
+	return dag.Container().
 		From("bitnami/kubectl:latest").
 		WithMountedDirectory("/kubeconfig", kubeconfigDir).
 		WithEnvVariable("KUBECONFIG", "/kubeconfig/admin.conf").
 		WithServiceBinding("k8s", k0sService).
-		WithExec([]string{"sh", "-c", "for i in $(seq 1 10); do echo 'Polling pods...'; kubectl get pods; sleep 2; done"})
+		WithExec([]string{"sh", "-c", "for i in $(seq 1 10); do echo 'Polling pods...'; kubectl get pods; sleep 2; done"}), nil
 
-	pollerOutput, err := poller.Stdout(ctx)
-	if err != nil {
-		return "", fmt.Errorf("error polling cluster: %v", err)
-	}
+	// pollerOutput, err := poller.Stdout(ctx)
+	// if err != nil {
+	// 	return "", fmt.Errorf("error polling cluster: %v", err)
+	// }
 
-	// 7. Combine and return the outputs.
-	summary := fmt.Sprintf("Deployment output:\n%s\n\nPolling output:\n%s", deployerOutput, pollerOutput)
-	return summary, nil
+	// // 7. Combine and return the outputs.
+	// summary := fmt.Sprintf("Deployment output:\n%s\n\nPolling output:\n%s", deployerOutput, pollerOutput)
+	// return summary, nil
 }
 
 // StartK0sCluster starts a k0s cluster and then blocks to keep it running.
@@ -557,18 +559,19 @@ func (m *DaggerModuleDemo) StartK0sCluster(ctx context.Context) (string, error) 
 
 // DeployK3sAndApp deploys a k3s cluster, installs an app via Helm,
 // tests the app via curl, and returns the output.
-func (m *DaggerModuleDemo) DeployK3sAndApp(ctx context.Context) (string, error) {
+func (m *DaggerModuleDemo) DeployK3sAndApp(ctx context.Context) (*dagger.Container, error) {
 	// Create a new k3s cluster instance named "test".
-	k3sCluster := dag.K3S("test")
+	k3sCluster := dag.K3S("test %i" + string(rand.Int()))
 	// Get the k3s server container.
-	kServer := k3sCluster.Server()
+	kServer := k3sCluster.AsService()
+	// kServer := k3sCluster.Server()
 
 	// Start the k3s cluster.
-	kServer, err := kServer.Start(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to start k3s cluster: %w", err)
-	}
-	fmt.Println("k3s cluster started as a service.")
+	// kServer, err := kServer.Start(ctx)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to start k3s cluster: %w", err)
+	// }
+	// fmt.Println("k3s cluster started as a service.")
 
 	// Retrieve the endpoint for the cluster's service on port 80 over HTTP.
 	ep, err := kServer.Endpoint(ctx, dagger.ServiceEndpointOpts{
@@ -576,7 +579,7 @@ func (m *DaggerModuleDemo) DeployK3sAndApp(ctx context.Context) (string, error) 
 		Scheme: "http",
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to retrieve cluster endpoint: %w", err)
+		return nil, fmt.Errorf("failed to retrieve cluster endpoint: %w", err)
 	}
 
 	// Use an alpine/helm container to:
@@ -584,7 +587,8 @@ func (m *DaggerModuleDemo) DeployK3sAndApp(ctx context.Context) (string, error) 
 	// 2. Set KUBECONFIG from the k3s cluster's kubeconfig.
 	// 3. Install the nginx chart via Helm.
 	// 4. Run curl to test the deployment using the endpoint.
-	out, err := dag.Container().From("alpine/helm").
+	// out, err := dag.Container().From("alpine/helm").
+	return dag.Container().From("alpine/helm").
 		WithExec([]string{"apk", "add", "kubectl"}).
 		WithEnvVariable("KUBECONFIG", "/.kube/config").
 		// Mount the kubeconfig file from the k3s cluster.
@@ -592,13 +596,8 @@ func (m *DaggerModuleDemo) DeployK3sAndApp(ctx context.Context) (string, error) 
 		// Install the nginx chart.
 		WithExec([]string{"helm", "install", "--wait", "--debug", "nginx", "oci://registry-1.docker.io/bitnamicharts/nginx"}).
 		// Test the deployment using curl.
-		WithExec([]string{"curl", "-sS", ep}).
-		Stdout(ctx)
-	if err != nil {
-		return "", fmt.Errorf("error during deployment and test: %w", err)
-	}
-
-	return out, nil
+		WithExec([]string{"curl", "-sS", ep}), nil
+	// Stdout(ctx)
 }
 
 // StartK3SAndOutputKubectlCommands starts a k3s cluster, retrieves the kubeconfig,
