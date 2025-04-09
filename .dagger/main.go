@@ -567,7 +567,7 @@ func (m *DaggerModuleDemo) DeployK3sAndApp(ctx context.Context) (*dagger.Contain
 	cacheBuster := fmt.Sprintf("%d", time.Now().UnixNano())
 	container := dag.Container().
 		From("alpine:latest").
-		WithEnvVariable("CACHE_BUSTER", cacheBuster).
+		WithEnvVariable("CACHE_BUSTER x", cacheBuster).
 		WithExec([]string{"sh", "-c", "echo Cache buster is $CACHE_BUSTER && sleep 1"})
 
 	_, err := container.Stdout(ctx)
